@@ -1,0 +1,9 @@
+[package]
+name = "rust-bencode"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4"
+ring = "0.17.14"
+sha1 = "0.10.6"
