@@ -32,6 +32,7 @@ pub struct Torrent {
 // for sending to the tracker as a param
 pub fn get_sha1_info_hash(bencode: &Bencode) -> Result<Vec<u8>, String> {
     let encoded = encoder::encode(bencode);
+    
     let mut hasher = Sha1::new();
     hasher.update(&encoded);
     Ok(hasher.finalize().to_vec())

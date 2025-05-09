@@ -1,6 +1,7 @@
 
 use std::collections::BTreeMap;
 
+#[derive(Debug)]
 pub enum Bencode {
     Int(i64),
     List(Vec<Bencode>),
@@ -35,6 +36,7 @@ pub mod encoder {
         }
     }
 }
+
 
 pub mod decoder {
     use super::Bencode;
