@@ -5,5 +5,9 @@ edition = "2021"
 
 [dependencies]
 chrono = "0.4"
+percent-encoding = "2.3.1"
+rand = "0.9.1"
+reqwest = "0.12.15"
 ring = "0.17.14"
 sha1 = "0.10.6"
+tokio = {version = "1.45.0", features=["full"] }

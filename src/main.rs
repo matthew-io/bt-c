@@ -2,10 +2,10 @@ mod bencoding;
 mod tracker;
 mod torrent;
 
-use {bencoding::decoder, std::fs, torrent::{build_torrent, Torrent}};
+use {bencoding::decoder, std::error, std::fs, torrent::{build_torrent, Torrent}, tracker::Tracker};
 
-
-fn main(){
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn error::Error>> {
     let file_data_result = fs::read("test.torrent").expect("couldnt read data");
 
     let file_data = match decoder::decode(&file_data_result) {
@@ -23,5 +23,7 @@ fn main(){
         Err(e) => panic!("couldn't create torrent from bencode")
     };
 
-    println!("{:#?}", torrent.info_hash);
+    let tracker = Tracker::new(torrent);
+    tracker.connect(true, 0, 0).await?;
+    Ok(())
 }
