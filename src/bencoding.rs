@@ -1,6 +1,11 @@
 
 use std::collections::BTreeMap;
 
+const LIST_INDICATOR: u8 = b'l';
+const INT_INDICATOR: u8 = b'i';
+const DICT_INDICATOR: u8 = b'd';
+const BYTES_INDICATOR: std::ops::RangeInclusive<u8> = b'0'..=b'9';
+
 #[derive(Debug)]
 pub enum Bencode {
     Int(i64),
@@ -39,7 +44,7 @@ pub mod encoder {
 
 
 pub mod decoder {
-    use super::Bencode;
+    use super::{Bencode, BYTES_INDICATOR, DICT_INDICATOR, INT_INDICATOR, LIST_INDICATOR};
     use std::{collections::BTreeMap, num::ParseIntError};
 
     fn parse_int(input: &[u8]) -> Result<(Bencode, &[u8]), String> {
@@ -119,10 +124,10 @@ pub mod decoder {
     
     pub fn decode(input: &[u8]) -> Result<(Bencode, &[u8]), String> {
         match input.first() {
-            Some(b'i') => parse_int(&input[1..]),
-            Some(b'l') => parse_list(&input[1..]),
-            Some(b'd') => parse_dict(&input[1..]),
-            Some(b'0'..=b'9') => parse_bytes(input),
+            Some(&INT_INDICATOR) => parse_int(&input[1..]),
+            Some(&LIST_INDICATOR) => parse_list(&input[1..]),
+            Some(&DICT_INDICATOR) => parse_dict(&input[1..]),
+            Some(&b) if BYTES_INDICATOR.contains(&b) => parse_bytes(input),
             _ => Err("invalid bencode type".to_string())
         }
     }
