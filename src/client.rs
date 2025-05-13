@@ -1,6 +1,7 @@
-use std::{collections::{BTreeMap, HashMap}, fs::{File, OpenOptions}, hash::Hash, path::Path};
+use std::{collections::{BTreeMap, HashMap}, fs::{File, OpenOptions}, future::Pending, hash::Hash, path::Path, time::{SystemTime, UNIX_EPOCH}};
 use std::io::{Result as IoResult};
 
+use log::info;
 use sha1::{Sha1, Digest};
 
 use crate::{protocol::PeerConnection, torrent::Torrent};
@@ -42,10 +43,15 @@ pub struct Piece {
     hash_value: String,
 }
 
+pub struct PendingRequest {
+    block: Block,
+    added: u128,
+}
+
 pub struct PieceManager {
     torrent: Torrent,
     peers: HashMap<String, Vec<u8>>,
-    pending_blocks: Vec<Block>,
+    pending_blocks: Vec<PendingRequest>,
     missing_pieces: Vec<Piece>,
     ongoing_pieces: Vec<Piece>,
     have_pieces: Vec<Piece>,
@@ -87,23 +93,141 @@ impl PieceManager {
         let torrent = &self.torrent;
         let mut pieces: Vec<Piece> = Vec::new();
         let total_pieces = torrent.pieces.len();
-        let std_piece_blocks = (torrent.piece_length + REQUEST_SIZE - 1) / REQUEST_SIZE;
-        
-        let mut blocks: Vec<Block> = Vec::new(); 
+        let std_piece_blocks = torrent.piece_length.div_ceil(REQUEST_SIZE);
 
         for (i, hash_value) in torrent.pieces.iter().enumerate() {
+            let mut blocks: Vec<Block> = Vec::new(); 
+            // check if the current piece is not the last piece
             if i < (total_pieces - 1) {
                 for offset in 0..std_piece_blocks {
                     let block: Block = Block::new(i as u64, (offset * REQUEST_SIZE )as u64, REQUEST_SIZE as u64);
                     blocks.push(block);
                 }
+            // if the current piece is not the last piece, then it might be the case
+            // that the length of this piece is not the same as the rest of the pieces
+            // and we need to account for that
+            } else {
+                // get the length of the last piece and corresponding blocks
+                let last_length = torrent.total_size % torrent.piece_length as u64;
+                let num_blocks = last_length.div_ceil(REQUEST_SIZE as u64);
+
+                for offset in 0..num_blocks {
+                    let start = offset * REQUEST_SIZE as u64;
+                    let length = std::cmp::min(REQUEST_SIZE as u64, last_length - start);
+                    blocks.push(Block::new(i as u64, start, length));
+                }
+
+                if last_length % REQUEST_SIZE as u64 > 0 {
+                    if let Some(last_block) = blocks.last_mut() {
+                        last_block.length = last_length % REQUEST_SIZE as u64;
+                    }
+                }
             }
+
+            pieces.push(Piece 
+                { index: i as u32, blocks, hash_value: hash_value.to_string(),  }
+            )
+        }
+        pieces
+    }
+
+    pub fn complete(&self) -> bool {
+        // returns true if we have downloaded all of the pieces for this torrent
+        self.have_pieces.len() == self.total_pieces as usize
+    }
+
+    pub fn bytes_downloaded(&self) -> u64 {
+        // gets the number of bytes downloaded
+        (self.have_pieces.len() * self.torrent.piece_length as usize) as u64
+    }
+
+    pub fn bytes_uploaded(&self) -> u64 {
+        // TODO: seeding not implemented
+        0
+    }
+
+    // adds a peer and its corresponding bitfield
+    pub fn add_peer(&mut self, peer_id: String, bitfield: Vec<u8>) {
+        self.peers.insert(peer_id, bitfield);
+    }
+
+    pub fn update_peer(&mut self, peer_id: String, index: u32) {
+        if let Some(bitfield) = self.peers.get_mut(&peer_id) {
+            if let Some(byte) = bitfield.get_mut(index as usize) {
+                *byte = 1
+            } else {
+                eprintln!("index {} out of range for peer {}", index, peer_id)
+            }
+        } else {
+            eprintln!("peer {} not found", peer_id)
+        }
+    }
+
+    pub fn delete_peer(&mut self, peer_id: String) {
+        if self.peers.remove(&peer_id).is_none() {
+            eprintln!("couldn't remove peer because it doesn't exist")
+        }
+    }
+
+    pub fn next_request(&mut self, peer_id: String) {
+        if !self.peers.contains_key(&peer_id) {
+            eprintln!("peer doesn't exist")
         }
 
-        return pieces
+        unimplemented!()
     }
-    
-}
+
+
+    pub fn expired_requests(&mut self, peer_id: &str) -> Option<Block> {
+        let current = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("Time went backwards")
+            .as_millis() as u128;
+
+        for request in self.pending_blocks.iter_mut() {
+            if let Some(bitfield) = self.peers.get(peer_id) {
+                if let Some(&has_piece) = bitfield.get(request.block.piece as usize) {
+                    if has_piece != 0 && request.added + (self.max_pending_time as u128) < current {
+                        info!(
+                            "re-requesting block {} for piece {}",
+                            request.block.offset, request.block.piece
+                        );
+                        request.added = current;
+                        return Some(request.block.clone());
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    pub fn next_ongoing(&mut self, peer_id: &str) -> Option<Block> {
+        for piece_idx in 0..self.ongoing_pieces.len() {
+            let piece = &mut self.ongoing_pieces[piece_idx];
+            
+            if let Some(bitfield) = self.peers.get(peer_id) {
+                if piece.index as usize >= bitfield.len() || bitfield[piece.index as usize] == 0 {
+                    continue;
+                }
+                
+                if let Some(block) = piece.next_request() {
+                    let current_time = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .expect("Time went backwards")
+                        .as_millis();
+                    
+                    self.pending_blocks.push(PendingRequest {
+                        block: block.clone(),
+                        added: current_time,
+                    });
+                    
+                    return Some(block);
+                }
+            }
+        }
+        
+        None
+    }}
 
 impl Block {
     pub fn new(piece: u64, offset: u64, length: u64) -> Block {
@@ -136,15 +260,13 @@ impl Piece {
     }
 
     // get next block to be requested by the client.
-    pub fn next_request(&self) -> Block {
-        let mut missing: Vec<Block> = self.blocks
+    pub fn next_request(&self) -> Option<Block> {
+        self.blocks
             .iter()
-            .filter(|b| b.status == Status::Missing)
+            .find(|b| b.status == Status::Missing)
             .cloned()
-            .collect();
-        missing.first().unwrap().clone()
     }
-
+    
     // update the block information if the block has now been received by the client
     pub fn block_received(&mut self, offset: u32, data: Vec<u8>) {
         if let Some(block) = self.blocks.iter_mut().find(|b| b.offset == offset as u64) {
