@@ -1,6 +1,8 @@
 mod bencoding;
 mod tracker;
 mod torrent;
+mod protocol;
+mod client;
 
 use {bencoding::decoder, std::error, std::fs, torrent::{build_torrent, Torrent}, tracker::Tracker};
 

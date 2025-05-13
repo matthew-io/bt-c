@@ -38,8 +38,7 @@ pub fn get_sha1_info_hash(bencode: &Bencode) -> Result<Vec<u8>, String> {
     Ok(hasher.finalize().to_vec())
 }
 
-// torrent building function that takes in bencoded
-// data and extracts the most relevant data, returning a torrent struct
+// takes bencoded torrent data and returns a torrent object
 pub fn build_torrent(bencode: &Bencode) -> Result<Torrent, String> {
     let dict = match bencode {
         Bencode::Dict(d) => d,
