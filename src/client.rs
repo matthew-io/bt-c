@@ -11,7 +11,7 @@ const REQUEST_SIZE: u32 = 2_u32.pow(14);
 // **** ENUMS **** //
 
 // status enum for pieces
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 enum Status {
     Missing = 0,
     Pending = 1,
@@ -24,7 +24,7 @@ enum Status {
 // a block is the smallest unit used in torrents. 
 // each block has a coreresponding piece, offset and length.
 // these three values are used to determine their location in the torrent data.
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Debug)]
 pub struct Block {
     piece: u64,
     offset: u64,
@@ -236,7 +236,7 @@ impl PieceManager {
             return Some(block);
         }
 
-        if let Some(block) = self.get_rarest_piece(peer_id) {
+        if let Some(mut block) = self.get_rarest_piece(peer_id) {
             let next_block = block.next_request()?;
             return Some(next_block);
         }
@@ -343,7 +343,7 @@ impl PieceManager {
     
                 if let Some(&bit) = bitfield.get(index) {
                     if bit != 0 {
-                        let piece = self.missing_pieces.remove(i);
+                        let mut piece = self.missing_pieces.remove(i);
                         self.ongoing_pieces.push(piece.clone());
                         return piece.next_request();
                     }
@@ -390,11 +390,15 @@ impl Piece {
     }
 
     // get next block to be requested by the client.
-    pub fn next_request(&self) -> Option<Block> {
-        self.blocks
-            .iter()
-            .find(|b| b.status == Status::Missing)
-            .cloned()
+    pub fn next_request(&mut self) -> Option<Block> {
+        let index = self.blocks.iter().position(|b| b.status == Status::Missing);
+
+        if let Some(idx) = index {
+            self.blocks[idx].status = Status::Pending;
+            Some(self.blocks[idx].clone())
+        } else {
+            None
+        }
     }
     
     // update the block information if the block has now been received by the client
@@ -433,5 +437,53 @@ impl Piece {
 
         let hex_hash = hex::encode(calculated_hash);
         self.hash_value == hex_hash
+    }
+}
+
+mod tests {
+    use super::*;
+
+    fn create_test_blocks() -> Vec<Block> {
+        (0..10).map(|offset| Block::new(0, offset * 10, 10)).collect()
+    }
+
+    #[test]
+    fn test_empty_piece() {
+        let mut p = Piece::new(0, vec![], "".to_string());
+        assert_eq!(p.next_request(), None); 
+    }
+
+    #[test]
+    fn test_request_ok() {
+        let blocks = create_test_blocks();
+        let mut p = Piece::new(0, blocks, "".to_string());
+
+        let block = p.next_request().expect("should return a block");
+        let missing = p.blocks.iter().filter(|b| b.status == Status::Missing).count();
+        let pending = p.blocks.iter().filter(|b| b.status == Status::Pending).count();
+
+        assert_eq!(pending, 1);
+        assert_eq!(missing, 9);
+        assert_eq!(block.offset, 0);
+    }
+
+    #[test]
+    fn test_reset_missing_block() {
+        let mut p = Piece::new(0, vec![], "".to_string());
+        p.block_received(123, b"hello".to_vec());
+    }
+
+    #[test]
+    fn test_reset_block() {
+        let blocks = create_test_blocks();
+        let mut p = Piece::new(0, blocks, "".to_string());
+
+        p.block_received(10, b"hello".to_vec());
+
+        let retrieved = p.blocks.iter().filter(|b| b.status == Status::Retrieved).count();
+        let missing = p.blocks.iter().filter(|b| b.status == Status::Missing).count();
+
+        assert_eq!(retrieved, 1);
+        assert_eq!(missing, 9);
     }
 }
