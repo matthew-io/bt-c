@@ -17,6 +17,7 @@ pub struct File {
 // return the values and get rid of the torrent 
 // struct entirely. but this will do.
 
+#[derive(Debug)]
 pub struct Torrent {
     pub info_hash: Vec<u8>,
     pub announce: String,

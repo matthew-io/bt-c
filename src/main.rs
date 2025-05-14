@@ -4,7 +4,7 @@ mod torrent;
 mod protocol;
 mod client;
 
-use {bencoding::decoder, std::error, std::fs, torrent::{build_torrent, Torrent}, tracker::Tracker};
+use {bencoding::decoder, client::PieceManager, std::{error, fs}, torrent::{build_torrent, Torrent}, tracker::Tracker};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn error::Error>> {
@@ -25,7 +25,11 @@ async fn main() -> Result<(), Box<dyn error::Error>> {
         Err(e) => panic!("couldn't create torrent from bencode")
     };
 
-    let tracker = Tracker::new(torrent);
-    tracker.connect(true, 0, 0).await?;
+    let pm = PieceManager::new(torrent)?;
+    pm.print();
+
     Ok(())
+    // let tracker = Tracker::new(torrent);
+    // tracker.connect(true, 0, 0).await?;
+    // Ok(())
 }

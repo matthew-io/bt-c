@@ -44,6 +44,7 @@ pub struct Piece {
     hash_value: String,
 }
 
+#[derive(Debug)]
 pub struct PendingRequest {
     block: Block,
     added: u128,
@@ -61,11 +62,14 @@ pub struct PieceManager {
     fd: File,
 }
 
+// **** IMPLEMENTATIONS **** // 
 
 impl PieceManager {
+    // create new piece manager from torrent
     pub fn new(torrent: Torrent) -> IoResult<PieceManager> {
         let total_pieces = torrent.pieces.len() as u16;
 
+        // output directory for torrent.
         let fd = OpenOptions::new()
             .read(true)
             .write(true)
@@ -89,11 +93,17 @@ impl PieceManager {
         Ok(pm)
     }
 
+    pub fn print(&self) {
+        println!("Torrent: {:#?}\n Peers: {:#?}\n Pending Blocks: {:#?}\n", self.torrent, self.peers, self.pending_blocks);
+    }
+
     // preconstruct the length of the missing piece vec for a particular torrent
     pub fn initiate_pieces(&self) -> Vec<Piece> {
         let torrent = &self.torrent;
         let mut pieces: Vec<Piece> = Vec::new();
         let total_pieces = torrent.pieces.len();
+        // the std number of blocks is the length of all of the blocks
+        // for all pieces except for (in most, but perhaps not all, cases) the last piece.
         let std_piece_blocks = torrent.piece_length.div_ceil(REQUEST_SIZE);
 
         for (i, hash_value) in torrent.pieces.iter().enumerate() {
@@ -108,16 +118,19 @@ impl PieceManager {
             // that the length of this piece is not the same as the rest of the pieces
             // and we need to account for that
             } else {
-                // get the length of the last piece and corresponding blocks
+                // get the length of the last piece and number of blocks for that piece
                 let last_length = torrent.total_size % torrent.piece_length as u64;
                 let num_blocks = last_length.div_ceil(REQUEST_SIZE as u64);
 
+                // make new blocks 
                 for offset in 0..num_blocks {
                     let start = offset * REQUEST_SIZE as u64;
                     let length = std::cmp::min(REQUEST_SIZE as u64, last_length - start);
                     blocks.push(Block::new(i as u64, start, length));
                 }
 
+                // change the length of the last block if its length
+                // is less than the block length
                 if last_length % REQUEST_SIZE as u64 > 0 {
                     if let Some(last_block) = blocks.last_mut() {
                         last_block.length = last_length % REQUEST_SIZE as u64;
@@ -125,12 +138,14 @@ impl PieceManager {
                 }
             }
 
+            // push piece
             pieces.push(Piece 
                 { index: i as u32, blocks, hash_value: hash_value.to_string(),  }
             )
         }
         pieces
     }
+
 
     pub fn block_received(&mut self, peer_id: String, piece_index: u64, block_offset: u64, data: Vec<u8>) {
         if let Some(pos) = self.pending_blocks.iter().position(|r| {
@@ -371,7 +386,6 @@ impl Block {
     } 
 }
 
-// **** IMPLEMENTATIONS **** // 
 impl Piece {
     // create new piece object
     pub fn new(index: u32, blocks: Vec<Block>, hash_value: String) -> Piece {
@@ -438,6 +452,8 @@ impl Piece {
         let hex_hash = hex::encode(calculated_hash);
         self.hash_value == hex_hash
     }
+
+
 }
 
 mod tests {
