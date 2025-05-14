@@ -1,7 +1,7 @@
-use std::{collections::{BTreeMap, HashMap}, fs::{File, OpenOptions}, future::Pending, hash::Hash, path::Path, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::{BTreeMap, HashMap}, error::Error, fs::{File, OpenOptions}, future::Pending, hash::Hash, io::{self, ErrorKind}, os::unix::fs::FileExt as _, path::Path, time::{SystemTime, UNIX_EPOCH}};
 use std::io::{Result as IoResult};
 
-use log::info;
+use log::{info, warn};
 use sha1::{Sha1, Digest};
 
 use crate::{protocol::PeerConnection, torrent::Torrent};
@@ -37,6 +37,7 @@ pub struct Block {
 // pieces themselves are composed of a smaller unit: blocks.
 // a piece is considered complete if all of its blocks
 // have been received.
+#[derive(Clone)]
 pub struct Piece {
     index: u32,
     blocks: Vec<Block>,
@@ -131,6 +132,62 @@ impl PieceManager {
         pieces
     }
 
+    pub fn block_received(&mut self, peer_id: String, piece_index: u64, block_offset: u64, data: Vec<u8>) {
+        if let Some(pos) = self.pending_blocks.iter().position(|r| {
+            r.block.piece == piece_index && r.block.offset == block_offset
+        }) {
+            self.pending_blocks.remove(pos);
+        }
+    
+        let index = piece_index as u32;
+        if let Some(pos) = self.ongoing_pieces.iter().position(|p| p.index == index) {
+            let mut piece = self.ongoing_pieces.remove(pos);
+    
+            piece.block_received(block_offset as u32, data);
+    
+            if piece.is_complete() {
+                if piece.is_hash_matching() {
+                    let offset = piece.index as u64 * self.torrent.piece_length as u64;
+                    if let Err(e) = self.write_piece(offset, &piece.blocks) {
+                        eprintln!("failed to write piece {} to file: {}", piece.index, e);
+                        return;
+                    }
+    
+                    self.have_pieces.push(piece);
+    
+                    let complete = self.have_pieces.len();
+                    let total = self.total_pieces as usize;
+                    let percentage = (complete as f64 / total as f64) * 100.0;
+                    info!("{}/{} pieces downloaded ({:.2}%)", complete, total, percentage);
+                } else {
+                    warn!("discarding corrupt piece {}", piece.index);
+                    piece.reset();
+                    self.ongoing_pieces.push(piece);
+                }
+            } else {
+                self.ongoing_pieces.push(piece);
+            }
+        } else {
+            warn!("trying to update piece {} that is not ongoing!", piece_index);
+        }
+    }
+    
+
+    pub fn write_piece(&mut self, offset: u64, blocks: &[Block]) -> io::Result<()> {
+        let mut buffer = Vec::new();
+
+        for block in blocks {
+            if let Some(ref data) = block.data {
+                buffer.extend_from_slice(data);
+            } else {
+                return Err(io::Error::new(ErrorKind::Other, "missing block data"));
+            }
+        }
+
+        self.fd.write_all_at(&buffer, offset)?;
+        Ok(())
+    }
+
     pub fn complete(&self) -> bool {
         // returns true if we have downloaded all of the pieces for this torrent
         self.have_pieces.len() == self.total_pieces as usize
@@ -169,12 +226,22 @@ impl PieceManager {
         }
     }
 
-    pub fn next_request(&mut self, peer_id: String) {
-        if !self.peers.contains_key(&peer_id) {
-            eprintln!("peer doesn't exist")
+    pub fn next_request(&mut self, peer_id: &String) -> Option<Block> {
+        
+        if let Some(block) = self.expired_requests(peer_id) {
+            return Some(block);
         }
 
-        unimplemented!()
+        if let Some(block) = self.next_ongoing(peer_id) {
+            return Some(block);
+        }
+
+        if let Some(block) = self.get_rarest_piece(peer_id) {
+            let next_block = block.next_request()?;
+            return Some(next_block);
+        }
+
+        None
     }
 
 
@@ -227,7 +294,70 @@ impl PieceManager {
         }
         
         None
-    }}
+    }
+
+    pub fn get_rarest_piece(&mut self, peer_id: &String) -> Option<Piece> {
+        let mut piece_count: HashMap<u32, u32> = HashMap::new();
+
+        let peer_bitfield = match self.peers.get(peer_id) {
+            Some(bf) => bf,
+            None => {
+                eprintln!("peer not found: {}", peer_id);
+                return None;
+            }
+        };
+
+        for piece in &self.missing_pieces {
+            if !peer_bitfield[piece.index as usize] == 0 {
+                continue;
+            }
+
+            let mut count = 0;
+            for other_bitfield in self.peers.values() {
+                if other_bitfield[piece.index as usize] > 0 {
+                    count += 1
+                }
+            }
+
+            piece_count.insert(piece.index, count);
+        }
+
+        let rarest_index = piece_count
+            .iter()
+            .min_by_key(|(_, &count)| count)
+            .map(|(&index, _)| index)?;
+
+        if let Some(pos) = self.missing_pieces.iter().position(|p| p.index == rarest_index) {
+            let piece = self.missing_pieces.remove(pos);
+            self.ongoing_pieces.push(piece.clone());
+            return Some(piece);
+        }
+
+        None
+    }
+
+    pub fn next_missing(&mut self, peer_id: &str) -> Option<Block> {
+        if let Some(bitfield) = self.peers.get(peer_id) {
+            for i in 0..self.missing_pieces.len() {
+                let index = self.missing_pieces[i].index as usize;
+    
+                if let Some(&bit) = bitfield.get(index) {
+                    if bit != 0 {
+                        let piece = self.missing_pieces.remove(i);
+                        self.ongoing_pieces.push(piece.clone());
+                        return piece.next_request();
+                    }
+                }
+            }
+        } else {
+            eprintln!("peer not found: {}", peer_id);
+        }
+    
+        None
+    }
+
+    
+}
 
 impl Block {
     pub fn new(piece: u64, offset: u64, length: u64) -> Block {
