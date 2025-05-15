@@ -1,11 +1,11 @@
-use std::{collections::BTreeMap, error, time};
+use std::{collections::BTreeMap, error, sync::Arc, time};
 use crate::{bencoding::{self, Bencode}, torrent::Torrent};
 use reqwest::{Client, Response};
 use rand::{self, Rng};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 
 pub struct Tracker {
-    torrent: Torrent,
+    torrent: Arc<Torrent>,
     peer_id: String,
     http_client: Client,
 }
@@ -89,7 +89,7 @@ pub fn calculate_peer_id() -> String {
 
 
 impl Tracker {
-    pub fn new(torrent: Torrent) -> Tracker {
+    pub fn new(torrent: Arc<Torrent>) -> Tracker {
         Tracker {
             torrent,
             peer_id: calculate_peer_id(),

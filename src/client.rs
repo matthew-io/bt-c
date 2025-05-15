@@ -1,10 +1,11 @@
-use std::{collections::{BTreeMap, HashMap}, error::Error, fs::{File, OpenOptions}, future::Pending, hash::Hash, io::{self, ErrorKind}, os::unix::fs::FileExt as _, path::Path, time::{SystemTime, UNIX_EPOCH}};
+use std::{collections::{BTreeMap, HashMap, VecDeque}, error::Error, fs::{File, OpenOptions}, future::Pending, hash::Hash, io::{self, ErrorKind}, os::unix::fs::FileExt as _, path::Path, sync::Arc, time::{SystemTime, UNIX_EPOCH}};
 use std::io::{Result as IoResult};
 
 use log::{info, warn};
 use sha1::{Sha1, Digest};
+use tokio::sync::Mutex;
 
-use crate::{protocol::PeerConnection, torrent::Torrent};
+use crate::{protocol::PeerConnection, torrent::Torrent, tracker::Tracker};
 
 const REQUEST_SIZE: u32 = 2_u32.pow(14);
 
@@ -51,7 +52,7 @@ pub struct PendingRequest {
 }
 
 pub struct PieceManager {
-    torrent: Torrent,
+    torrent: Arc<Torrent>,
     peers: HashMap<String, Vec<u8>>,
     pending_blocks: Vec<PendingRequest>,
     missing_pieces: Vec<Piece>,
@@ -62,11 +63,39 @@ pub struct PieceManager {
     fd: File,
 }
 
+pub struct TorrentClient {
+    tracker: Tracker,
+    available_peers: Arc<Mutex<VecDeque<PeerConnection>>>,
+    peers: Vec<PeerConnection>,
+    piece_manager: PieceManager,
+    abort: bool,
+}
+
 // **** IMPLEMENTATIONS **** // 
+
+impl TorrentClient {
+    pub async fn new(torrent: Torrent) -> Result<Self, Box<dyn Error>> {
+        let torrent = Arc::new(torrent);
+        
+        let tracker = Tracker::new(torrent.clone());
+        let piece_manager = PieceManager::new(torrent.clone())?;
+        let available_peers = Arc::new(Mutex::new(VecDeque::new()));
+
+        Ok(TorrentClient {
+            tracker,
+            available_peers,
+            peers: vec![],
+            piece_manager,
+            abort: false,
+        })
+    }
+
+    
+}
 
 impl PieceManager {
     // create new piece manager from torrent
-    pub fn new(torrent: Torrent) -> IoResult<PieceManager> {
+    pub fn new(torrent: Arc<Torrent>) -> IoResult<PieceManager> {
         let total_pieces = torrent.pieces.len() as u16;
 
         // output directory for torrent.
