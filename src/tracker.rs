@@ -15,11 +15,29 @@ pub struct TrackerResponse {
     pub interval: u32,
     pub complete: u64,
     pub incomplete: u64,
-    pub peers: Vec<u8>,
+    pub peers: Vec<(String, u16)>,
 }
 
 impl TrackerResponse {
+    fn parse_peers(data: &[u8]) -> Result<Vec<(String, u16)>, Box<dyn error::Error>> {
+        if data.len() % 6 != 0 {
+            return Err("peers field length is not a multiple of 6".into());
+        }
+
+        let mut result = Vec::new();
+        for chunk in data.chunks(6) {
+            let ip = format!(
+                "{}.{}.{}.{}",
+                chunk[0], chunk[1], chunk[2], chunk[3]
+            );
+            let port = u16::from_be_bytes([chunk[4], chunk[5]]);
+            result.push((ip, port));
+        }
+
+        Ok(result)
+    }
     
+
     // parses the response from tracker and returns a TrackerResponse
     pub async fn new(response: Response) -> Result<TrackerResponse, Box<dyn error::Error>> {
         // converts the response to bytes to be decoded
@@ -64,20 +82,27 @@ impl TrackerResponse {
         };
 
         // gets the compact peer list as a byte string (each peer is 6 bytes: 4 IP + 2 port)
-        let peers = match dict.get(&b"peers"[..]) {
+        let raw_peers = match dict.get(&b"peers"[..]) {
             Some(Bencode::Bytes(b)) => b.clone(),
             _ => return Err("couldn't get peers dict from tracker response".into()),
         };
 
+        let peers = Self::parse_peers(&raw_peers)?;
 
-        Ok(TrackerResponse { failure, interval,complete, incomplete, peers })
+
+        Ok(TrackerResponse { failure, interval,complete, incomplete, peers: peers })
     }
 
+    // print formatted tracker response data
     pub fn print(self) {
         println!(
-            "Failure reason (if applicable): {}. \n Interval: {}. Complete: {}. Incomplete: {}. Peers: {:#?}", self.failure, self.interval, self.complete, self.incomplete, self.peers
+            "Failure reason (if applicable): {}. \n Interval: {}. Complete: {}. Incomplete: {}.", self.failure, self.interval, self.complete, self.incomplete
+        );
 
-        )
+        println!("peer list:");
+        for (ip, port) in self.peers {
+            println!(" {}:{} ", ip, port); 
+        }
     }
 }
 

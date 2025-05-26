@@ -481,8 +481,6 @@ impl Piece {
         let hex_hash = hex::encode(calculated_hash);
         self.hash_value == hex_hash
     }
-
-
 }
 
 mod tests {
