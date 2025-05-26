@@ -24,6 +24,7 @@ impl TrackerResponse {
     pub async fn new(response: Response) -> Result<TrackerResponse, Box<dyn error::Error>> {
         // converts the response to bytes to be decoded
         let bytes = response.bytes().await?;
+        println!("{:#?}", bytes);
         
         // decodes the bytes into bencode format
         let bencode = bencoding::decoder::decode(&bytes)?;
@@ -49,16 +50,17 @@ impl TrackerResponse {
             _ => return Err("couldn't get interval:(".into()),
         };
 
+
         // gets the number of peers within the entire file (i.e. seeders)
         let complete = match dict.get(&b"complete"[..]) {
             Some(Bencode::Int(i)) => i.clone() as u64,
-            _ => return Err("couldn't get complete bytes".into()),
+            _ => 0,
         };
 
         // gets the number of non-seeding peers within the entire file (i.e. leechers)
         let incomplete = match dict.get(&b"incomplete"[..]) {
             Some(Bencode::Int(i)) => i.clone() as u64,
-            _ => return Err("couldn't get incomplete bytes".into()),
+            _ => 0,
         };
 
         // gets the compact peer list as a byte string (each peer is 6 bytes: 4 IP + 2 port)
@@ -66,8 +68,9 @@ impl TrackerResponse {
             Some(Bencode::Bytes(b)) => b.clone(),
             _ => return Err("couldn't get peers dict from tracker response".into()),
         };
-        
-        Ok(TrackerResponse { failure, interval, complete, incomplete, peers })
+
+
+        Ok(TrackerResponse { failure, interval,complete, incomplete, peers })
     }
 
     pub fn print(self) {

@@ -14,7 +14,7 @@ use {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn error::Error>> {
-    let file_data_result = fs::read("test.torrent").expect("couldn't read data");
+    let file_data_result = fs::read("debian-12.11.0-amd64-netinst.iso.torrent").expect("couldn't read data");
 
     let file_data = match decoder::decode(&file_data_result) {
         Ok((bencode, _)) => bencode,
@@ -27,10 +27,8 @@ async fn main() -> Result<(), Box<dyn error::Error>> {
         Err(e) => panic!("couldn't create torrent from bencode: {}", e),
     };
 
-    // ✅ Wrap the torrent in Arc
     let torrent = Arc::new(torrent);
 
-    // ✅ Clone Arc where needed
     let pm = PieceManager::new(torrent.clone())?;
     pm.print();
 
